@@ -28,6 +28,7 @@ header {
 }
 
 .navbtn {
+  position: relative;
   display: inline-block;
   margin: auto 20px;
   font-family: 'Arial light';
@@ -48,4 +49,32 @@ header {
 
 .navbtn:active {
   box-shadow:0px 0px;
+}
+
+.content{
+  /*background-color: aqua;*/
+  text-align:left;
+  padding:40px;
+  margin:5% auto 0 auto;
+  width:40%;
+  font-family: tahoma;
+}
+
+.content .title{
+  font-size: 40px;
+  /*Filler color */
+  color:rgb(0, 95, 219);
+  margin-bottom:30px;
+}
+
+.content .text{
+  color:white;
+}
+
+.content a{
+  color:rgb(0, 85, 196);
+}
+
+.content a:visited{
+  color:rgb(0, 85, 196);
 }
