@@ -2,6 +2,7 @@ body {
   background-color: #161920;
   padding: 0px;
   margin: 0px;
+  color: #cfcece;
 }
 
 header {
@@ -54,8 +55,8 @@ header {
 .content{
   /*background-color: aqua;*/
   text-align:left;
-  padding:40px;
-  margin:5% auto 0 auto;
+  padding:10px 100px 0px 100px;
+  margin:0 auto 0 auto;
   width:40%;
   font-family: tahoma;
 }
@@ -77,4 +78,71 @@ header {
 
 .content a:visited{
   color:rgb(0, 85, 196);
+}
+
+.coverImage {
+  width: 90%;
+}
+
+.likeButton{
+  background-color: #4CAF50;
+  border: none;
+  color: white;
+  padding: 15px 32px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 16px;
+  width: 120px;
+  margin:10px;
+}
+
+.dislikeButton{
+  background-color: #b43737;
+  border: none;
+  color: white;
+  padding: 15px 32px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 16px;
+  width: 120px;
+  margin:10px;
+}
+
+.skipButton{
+  background-color: #373fb4;
+  border: none;
+  color: white;
+  padding: 15px 32px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 16px;
+  width: 120px;
+  margin:10px;
+}
+
+.likeButton:hover{
+  background-color: #326e34;
+}
+
+.dislikeButton:hover{
+  background-color: #802828;
+}
+
+.skipButton:hover{
+  background-color: #272d7c;
+}
+
+.likeButton:active{
+  background-color: #214722;
+}
+
+.dislikeButton:active{
+  background-color: #611e1e;
+}
+
+.skipButton:active{
+  background-color: #1c1f50;
 }

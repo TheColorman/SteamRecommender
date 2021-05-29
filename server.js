@@ -6,49 +6,350 @@
 
 // Server kan få stort set alt informationen fra Client (cookies), men Client kan kun få det som Server sender.
 
+//  Her definerer jeg en masse programmer som jeg har installeret gennem Node Package Manager (NPM)
 const express = require('express');     // Serveren, altså det der viser HTML siden når du forbinder
 const cookieParser = require('cookie-parser');  // Cookie Parser, brugt til at lave cookies så vi kan gemme data om folk (gemt på Client side)
 const session = require('express-session'); // Session, bruges til at gemme data om folk (gemt på Server side)
+const bodyParser = require('body-parser');
 const path = require('path');   // Path, bliver brugt til at finde filer og sådan noget
 const fetch = require('node-fetch');    // Fetch, brugt til at forbinde til API's
 const querystring = require('querystring'); // Ting der laver arrays om til queries (det er de dele af et url der ser sådan her ud: "?appid=1234&username=something")
-const greenworks = require('./node_addons/greenworks');    // Greenworks, program der kan forbinde direkte til SteaWorks API
 const steamLogin = require('steam-login');  // Ting til at logge ind med steam
-const redis = require('redis'); // en eller anden database
-
-let RedisStore = require('connect-redis')(session); // Ting der gør så jeg kan bruge databasen
-let redisClient = redis.createClient();
+const loki = require('lokijs');     // Database så vi kan gemme data
 
 const { catchAsync } = require('./utils.js'); // Vores fil med hjælpefunktioner
 const APIkey = "89903B084E81B0FEC3F90D8B5C4FE540";  // Nøglen der giver adgang til API requests. Secret!
 const secret = "flødeboller med carrysauce";    // Hemmelig kode der bliver brugt til vores program.
 
+//#region Databases
+// Her laver jeg selve databasen
+var UserGames = new loki('./databases/UserGames.json', {
+    autoload: true,
+    autoloadCallback: UserGamesInitialize,
+    autosave: true,
+    autosaveInterval: 4000,
+});
+
+var SteamGames = new loki('./databases/SteamGames.json', {
+    autoload: true,
+    autoloadCallback: SteamGamesInitialize,
+    autosave: true,
+    autosaveInterval: 4000,
+});
+
+function UserGamesInitialize() {
+    var users = UserGames.getCollection("users");
+    if (users == null) {
+        users = UserGames.addCollection("users", {
+            unique: ["id"],
+            autoupdate: true
+        });
+    }
+
+    runUserGamesLogic();
+}
+function SteamGamesInitialize() {
+    var games = SteamGames.getCollection("games");
+    if (games == null) {
+        games = SteamGames.addCollection("games", {
+            unique: ["appid"],
+            autoupdate: true,
+        });
+    }
+
+    runSteamGamesLogic();
+}
+
+function runUserGamesLogic() {
+    const userCount = UserGames.getCollection("users").count();
+    console.log(`Number of users in database: ${userCount}`);
+}
+
+function runSteamGamesLogic() {
+    const gameCount = SteamGames.getCollection("games").count();
+    console.log(`Number of games in database: ${gameCount}`);
+}
+
+//#endregion
+
 const app = express();  // Express bliver brugt til at starte en app (aka. en hjemmeside)
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
-    store: new RedisStore({ client: redisClient }),
     secret: secret,
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: true },
-}));
+    //cookie: { secure: true },
+}
+));
 app.use(steamLogin.middleware({
     realm: 'http://localhost:8080/',
     verify: 'http://localhost:8080/verify',
     apiKey: APIkey,
 }));
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+
 
 app.get('/', (req, res) => {    // Hjemmesiden bliverk kørt på localhost, så '/' er 'localhost/'. Hvis der havde stået ".get('/login/')" ville det være 'localhost/login'.
     res.sendFile(path.join(__dirname + '/website/index.html')); // HTML filen bliver sendt til siden
 });
 
-app.get('/rating', (req, res) => {
-    console.log(req.user);
-    res.sendFile(path.join(__dirname + '/website/rating/index.html'));
-});
+app.get('/rating', catchAsync(async (req, res) => {
+    if (!req.user) return res.redirect("/login");
+    const steamid = req.user.steamid;
+    const userDB = UserGames.getCollection("users");
+    let user = userDB.findOne({ id: steamid });
+    if (user === null || !user.games.length) {
+        res.redirect('/save-games');
+    }
+
+    res.send(`<!DOCTYPE html>
+    <!--[if lt IE 7]>      <html class="no-js lt-ie9 lt-ie8 lt-ie7"> <![endif]-->
+    <!--[if IE 7]>         <html class="no-js lt-ie9 lt-ie8"> <![endif]-->
+    <!--[if IE 8]>         <html class="no-js lt-ie9"> <![endif]-->
+    <!--[if gt IE 8]>      <html class="no-js"> <!--<![endif]-->
+    <html>
+        <head>
+            <meta charset="utf-8">
+            <meta http-equiv="X-UA-Compatible" content="IE=edge">
+            <title>SANS UNDERTALE</title>
+            <meta name="description" content="">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <link rel="stylesheet" href="css/style.css">
+        </head>
+        <body onload="onLoad()" id="docBody">
+            <!--[if lt IE 7]>
+                <p class="browsehappy">You are using an <strong>outdated</strong> browser. Please <a href="#">upgrade your browser</a> to improve your experience.</p>
+            <![endif]-->
+    
+            <header>
+                <a href="/"><div class="companyname">MIST</div></a>
+                <nav class="navbar">
+                    <a href="/rating"><div  class="navbtn">Rating</div></a>
+                    <a href="/recommend"><div  class="navbtn">Recommend</div></a>
+                    <a href="/contact"><div  class="navbtn">Contact</div></a>
+                    <a href="/account"><div  class="navbtn">My account</div></a>
+                </nav>
+            </header>
+            <div class="content" id="fetchStatus">
+                <div class="title">Fetching Steam games</div>
+                <div class="text">Please wait a moment...</div>
+            </div>
+
+            <script>
+                const fetchStatus = document.getElementById("fetchStatus");
+
+                const body = document.getElementById("docBody");
+                body.onload = () => {
+                    fetch("/api/fetchUserGames", {
+                        method: 'GET'
+                    }).then(async (res) => {
+                        const json = await res.json();
+                        const ratingGame = json.ratingGame;
+                        console.log(ratingGame);
+
+                        const fetchStatus = document.getElementById("fetchStatus");
+                        fetchStatus.innerHTML = "";
+
+                        const title = document.createElement("div");
+                        title.innerHTML = ratingGame.name;
+                        title.classList.add("title");
+
+                        const img = document.createElement("img");
+                        img.classList.add("coverImage");
+
+                        const description = document.createElement("div");
+                        description.innerHTML = \`You've played \${ratingGame.playtime_forever > 60 ? \`\${Math.round(ratingGame.playtime_forever/60)} hours\`: \`\${ratingGame.playtime_forever} minutes\`}\`;
+                        description.classList.add("text");
+
+                        if (!ratingGame) {
+                            title.innerHTML = "You've run out of games!";
+                            description.innerHTML = "We've run out of games you can rate! Either click <a href=\\"/recommend\\">here</a> to begin getting game recommendations, or come back later when you've played more games.";
+                            fetchStatus.appendChild(title);
+                            fetchStatus.appendChild(description);
+                            return;
+                        }
+                        img.src = \`https://cdn.akamai.steamstatic.com/steam/apps/\${ratingGame.appid}/header.jpg\`
+                        fetchStatus.appendChild(title);
+                        fetchStatus.appendChild(img);
+                        fetchStatus.appendChild(description);
+
+                        const buttonLike = document.createElement("button");
+                        const buttonDislike = document.createElement("button");
+                        const buttonSkip = document.createElement("button");
+                        buttonLike.classList.add("likeButton");
+                        buttonDislike.classList.add("dislikeButton");
+                        buttonSkip.classList.add("skipButton");
+
+                        buttonLike.innerHTML = "Like";
+                        buttonDislike.innerHTML = "Dislike";
+                        buttonSkip.innerHTML = "Skip";
+
+                        buttonLike.onclick = () => {
+                            fetch("/api/rateGame", {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                    appid: ratingGame.appid,
+                                    rating: true,
+                                }),
+                                headers: { 'Content-Type': 'application/json' },
+                            }).then(res => {
+                                if (res.status == 200) {
+                                    location.reload();
+                                }
+                            });
+                        }
+                        buttonDislike.onclick = () => {
+                            fetch("/api/rateGame", {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                    appid: ratingGame.appid,
+                                    rating: false,
+                                }),
+                                headers: { 'Content-Type': 'application/json' },
+                            }).then(res => {
+                                if (res.status == 200) {
+                                    location.reload();
+                                }
+                            });
+                        }
+                        buttonSkip.onclick = () => {
+                            fetch("/api/rateGame", {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                    appid: ratingGame.appid,
+                                    skip: true,
+                                }),
+                                headers: { 'Content-Type': 'application/json' },
+                            }).then(res => {
+                                if (res.status == 200) {
+                                    location.reload();
+                                }
+                            });
+                        }
+
+                        fetchStatus.appendChild(buttonLike);
+                        fetchStatus.appendChild(buttonDislike);
+                        fetchStatus.appendChild(buttonSkip);
+
+                        const lineBreak = document.createElement("br");
+                        const resetButton = document.createElement("button");
+                        resetButton.innerHTML = "Reset all ratings";
+                        resetButton.onclick = () => {
+                            fetch("/api/reset", {
+                                method: 'GET',
+                            }).then(res => {
+                                if (res.status == 200) {
+                                    location.reload();
+                                }
+                            });
+                        }
+                        fetchStatus.appendChild(lineBreak);
+                        fetchStatus.appendChild(resetButton)
+                    });
+                }
+            </script>
+        </body>
+    </html>`);
+}));
 app.get('/recommend', (req, res) => {
-    res.sendFile(path.join(__dirname + '/website/recommend/index.html'));
+    if (!req.user) return res.redirect("/login");
+    const steamid = req.user.steamid;
+    const userDB = UserGames.getCollection("users");
+    let user = userDB.findOne({ id: steamid });
+    if (user === null || !user.games.length) return res.redirect("/save-games");
+
+    res.send(`<!DOCTYPE html>
+    <!--[if lt IE 7]>      <html class="no-js lt-ie9 lt-ie8 lt-ie7"> <![endif]-->
+    <!--[if IE 7]>         <html class="no-js lt-ie9 lt-ie8"> <![endif]-->
+    <!--[if IE 8]>         <html class="no-js lt-ie9"> <![endif]-->
+    <!--[if gt IE 8]>      <html class="no-js"> <!--<![endif]-->
+    <html>
+        <head>
+            <meta charset="utf-8">
+            <meta http-equiv="X-UA-Compatible" content="IE=edge">
+            <title>SANS UNDERTALE</title>
+            <meta name="description" content="">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <link rel="stylesheet" href="css/style.css">
+        </head>
+        <body onload="onLoad()" id="docBody">
+            <!--[if lt IE 7]>
+                <p class="browsehappy">You are using an <strong>outdated</strong> browser. Please <a href="#">upgrade your browser</a> to improve your experience.</p>
+            <![endif]-->
+    
+            <header>
+                <a href="/"><div class="companyname">MIST</div></a>
+                <nav class="navbar">
+                    <a href="/rating"><div  class="navbtn">Rating</div></a>
+                    <a href="/recommend"><div  class="navbtn">Recommend</div></a>
+                    <a href="/contact"><div  class="navbtn">Contact</div></a>
+                    <a href="/account"><div  class="navbtn">My account</div></a>
+                </nav>
+            </header>
+            <div class="content" id="fetchStatus">
+                <div class="title">Fetching recommendations</div>
+                <div class="text">Please wait a moment...</div>
+            </div>
+
+            <script>
+                const fetchStatus = document.getElementById("fetchStatus");
+                let gameList = [];
+                const updateGame = () => {
+                    if (!gameList.length) return;
+                    fetch("/api/fetchGameInfo", {
+                        method: 'POST',
+                        body: JSON.stringify(gameList[0]),
+                        headers: { 'Content-Type': 'application/json' }
+                    }).then(response => {
+                        return response.json();
+                    }).then(resJSON => {
+                        setHtml(gameList[0], resJSON);
+                    });
+                }
+                const noGames = () => {
+                    fetchStatus.innerHTML = \`<div class="title">No more recommendations</div>
+                    <div class="text"> We've run out of recommendations for you! Either try <a href="/api/reset">resetting your rating</a> and rating a little differently or wait for the database to get more Steam games.</div>\`;
+                }
+                const setHtml = (newGame, resJSON) => {
+                    fetchStatus.innerHTML = \`<div class="title">\${resJSON.name}</div>
+                    <img class="coverImage" src="\${resJSON.header_image}">
+                    <div class="text">\${resJSON.is_free ? "Free!" : resJSON.price_overview ? resJSON.price_overview.final_formatted : "Price unknown."}\n</div>
+                    <br>
+                    <div class="test"><a href="https://store.steampowered.com/app/\${newGame.appid}" target="_blank" rel="noreferrer noopener">Store page</a></div>
+                    <div class="text">\${resJSON.short_description}</div>
+                    <br>
+                    \${resJSON.genres ? \`<div class="text"><b>Genres:</b>\\n\${(resJSON.genres.map(genre => genre.description)).join(", ")}</div>\` : ""}
+                    <br><br>
+                    <button class="likeButton" onclick="gameList.shift(); if (!gameList.length) { noGames(); } else { updateGame(); }">Next game</button>\`;
+                }
+
+                const body = document.getElementById("docBody");
+                body.onload = () => {
+                    fetch("/api/recommendations", {
+                        method: 'GET'
+                    }).then(async (res) => {
+                        gameList = await res.json();
+                        console.log(gameList);
+                
+                        if (gameList.error) {
+                            switch(gameList.error) {
+                                case 1:
+                                    fetchStatus.innerHTML = \`<div class="title">
+                                        Not enough rated games.
+                                    </div>
+                                    <div class="text">
+                                        Click <a href="/rating">here</a> to begin rating games so we can craft recommendations for you.
+                                    </div>\`;
+                            }
+                        }
+                        updateGame();
+                    });
+                }
+            </script>
+        </body>
+    </html>`);
 });
 app.get('/contact', (req, res) => {
     res.sendFile(path.join(__dirname + '/website/contact/index.html'));
@@ -57,19 +358,59 @@ app.get('/account', (req, res) => {
     res.sendFile(path.join(__dirname + '/website/account/index.html'));
 });
 
-
+//#region Login system
 app.get('/login', steamLogin.authenticate(), (req, res) => {
-    res.redirect('/');
+    res.redirect('/verify');
 });
-
-app.get('/verify', steamLogin.verify(), (req, res) => {
-    res.redirect('/');
-});
-
+app.get('/verify', steamLogin.verify(), catchAsync(async (req, res) => {
+    res.redirect('/save-games');
+}));
 app.get('/logout', steamLogin.enforceLogin('/'), (req, res) => {
     req.logout();
     res.redirect('/');
 });
+//#endregion
+
+app.get('/save-games', catchAsync(async (req, res) => {
+    if (!req.user) return res.redirect('/login');
+    const steamid = req.user.steamid;
+    // Save to database
+    const userDB = UserGames.getCollection("users");
+    // Request user games from steam API
+    const request = {
+        key: APIkey,
+        steamid: steamid,
+        include_appinfo: true,
+        include_played_free_games: true,
+    }
+    const response = await fetch(`https://api.steampowered.com/IPlayerService/GetOwnedGames/v1?${querystring.stringify(request)}`, {
+        method: 'GET',
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+    });
+    const resjson = await response.json();
+    const games = resjson.response.games;
+    let user = userDB.findOne({ id: steamid });
+    if (user === null) {
+        userDB.insert({
+            id: steamid,
+            games: games,
+            username: resjson.personaname,
+            avatar: resjson.avatarhash,
+            tags: [],
+        });
+    } else {
+        games.forEach(game => {
+            if (user.games.find(uGame => uGame.appid == game.appid)) return;
+            user.games.push(game);
+        });
+        user.username = resjson.personaname;
+        user.avatar = resjson.avatarhash;
+        userDB.update(user);
+    }
+    res.redirect('/');
+}));
 
 app.get('/api-test', catchAsync(async (req, res) => {
     if (req.user == null) return res.end('<p>You\'re not <a href="/login"> logged in</a>.</p>');
@@ -84,27 +425,247 @@ app.get('/api-test', catchAsync(async (req, res) => {
         method: 'GET',
         headers: {
             "Content-Type": "application/x-www-form-urlencoded",
-
         }
     });
     const resjson = await response.json();
     const games = resjson.response.games;
-    const filteredGames = games.filter(game => game.playtime_forever >= 60);
+    const filteredGames = games.filter(game => game.playtime_forever >= 10);
     req.user.games = filteredGames;
     const sortedGames = filteredGames.sort((a, b) => b.playtime_forever - a.playtime_forever);
     res.setHeader('Content-Type', 'text/html; charset=utf8');
-    res.write("<h1>List of steam games you have at least 1 hour of playtime in.<br><br>");
+    res.write("<h1>List of steam games you have at least 1 hour of playtime in.     also a <a href='/'>home button</a><br><br>");
     sortedGames.forEach(game => {
         res.write(`<h3>${game.name}</h3>`);
         res.write(`<img src="http://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_logo_url}.jpg">`)
         res.write(`<p>Playtime: ${game.playtime_forever/60} hours</p><br>`);
     });
-
-    if (greenworks.init()) {
-    }
     res.end();
 }));
 
+app.get('/reload-database', catchAsync(async (req, res) => {
+    
+    // Få en liste over alle steam spil
+    const allGamesListRes = await fetch(`https://api.steampowered.com/ISteamApps/GetAppList/v2/`, {
+        method: 'GET',
+    });
+    const steamGames = (await allGamesListRes.json()).applist.apps;
+    const steamGamesDB = SteamGames.getCollection("games");
+    
+    // Check hvert steam spil og gem tags
+    for (let i = steamGamesDB.count(); i < steamGames.length; i++) {
+        const steamGame = steamGames[i];
+        let foundGame = steamGamesDB.findOne({ appid: steamGame.appid });
+        
+        console.log(`App ${i}/${steamGames.length}`);
+        if (foundGame) {
+            console.log(`App already in database, skipping...`);
+            continue;
+        }
+        console.log(`Fetching app ${JSON.stringify(steamGame)}`);
+        await fetch(`https://store.steampowered.com/app/${steamGame.appid}`, {
+            method: 'GET',
+        }).then(async appRes => {
+            const appHtml = await appRes.text();
+            const regexp = /<a[^>]*class=\"app_tag\"[^>]*>([^<]*)<\/a>/gmi;
+            const regexpArr = [...appHtml.matchAll(regexp)];
+            const result = appHtml.match(regexp);
+            
+            let tags = [];
+            regexpArr.forEach(match => {
+                tags.push(match[1].trim());
+            });
+            let game = steamGamesDB.findOne({ appid: steamGame.appid });
+            if (game === null) {
+                steamGamesDB.insert({
+                    appid: steamGame.appid,
+                    tags: tags
+                });
+            } else {
+                game.tags = tags;
+                steamGamesDB.update(game);
+            }
+            console.log(`App tags: ${tags}`);
+            
+        });
+        res.end(`what is up dog`);    
+    }
+}));
+
+// api endpoints
+app.get('/api/fetchUserGames', catchAsync(async (req, res) => {
+    if (!req.user) return res.redirect('/login');   // You can only make this API call if you are logged in, so this shouldn't be necessary, but you never know.
+    const steamid = req.user.steamid;
+    const steamGamesDB = SteamGames.getCollection("games");
+    const userDB = UserGames.getCollection("users");
+    let user = userDB.findOne({ id: steamid });
+    for (let i = 0; i < user.games.length; i++) {
+        let game = steamGamesDB.findOne({ appid: user.games[i].appid });
+        if (game === null) {
+            addedGames = true;
+            console.log(`Could not fine game: ${user.games[i].name} with ID ${user.games[i].appid}`);
+            await fetch(`https://store.steampowered.com/app/${user.games[i].appid}`, {
+                method: 'GET',
+            }).then(async appRes => {
+                const appHtml = await appRes.text();
+                const regexp = /<a[^>]*class=\"app_tag\"[^>]*>([^<]*)<\/a>/gmi;
+                const regexpArr = [...appHtml.matchAll(regexp)];
+
+                let tags = [];
+                regexpArr.forEach(match => {
+                    tags.push(match[1].trim());
+                });
+                steamGamesDB.insert({
+                    appid: user.games[i].appid,
+                    tags: tags,
+                });
+                console.log(`Game tags: ${tags}\n`);
+            });
+        }
+    }
+    const ratingGame = user.games.find(game => !game.rated && game.playtime_forever >= 10);
+    if (!ratingGame) {
+        res.json({
+            ratingGame: 0,
+        });
+    } else {   
+        res.json({
+            ratingGame: ratingGame
+        });
+    }
+    res.status(200).end();
+}));
+
+app.post('/api/rateGame', catchAsync(async (req, res) => {
+    if (!req.user) return res.redirect('/login');
+    const steamid = req.user.steamid;
+    const userDB = UserGames.getCollection("users");
+    const user = userDB.findOne({ id: steamid });
+    const steamGamesDB = SteamGames.getCollection("games");
+    const game = steamGamesDB.findOne({ appid: req.body.appid });
+    if (req.body.skip) {
+        (user.games.find(uGame => uGame.appid == game.appid)).rated = true;
+        userDB.update(user);
+        res.status(200).end();
+        return;
+    }
+
+
+    for (let i = 0; i < game.tags.length; i++) {
+        if (!user.tags) user.tags = [];
+        let tag = user.tags.find(tag => tag.name == game.tags[i]);
+        if (tag) {
+            req.body.rating ? tag.rating += 1 : tag.rating -= 1;
+        } else {
+            user.tags.push({
+                name: game.tags[i],
+                rating: req.body.rating ? 1 : -1,
+            });
+        }
+    }
+    (user.games.find(uGame => uGame.appid == game.appid)).rated = true;
+
+    steamGamesDB.update(game);
+    userDB.update(user);
+
+    console.log(user.tags);
+
+    res.status(200).end();
+}));
+
+app.get('/api/recommendations', catchAsync(async (req, res) => {
+    if (!req.user) return res.redirect('/login');
+    const steamid = req.user.steamid;
+    const userDB = UserGames.getCollection("users");
+    const steamGamesDB = SteamGames.getCollection("games");
+    const user = userDB.findOne({ id: steamid });
+
+    const userTags = [...user.tags];
+    userTags.sort((a, b) => {
+        if (a.rating < b.rating) return 1;
+        if (b.rating < a.rating) return -1;
+        return 0;
+    });
+    if (!userTags || userTags.length < 15) {
+        res.json({
+            error: 1,
+        });
+        res.status(200).end();
+        return;
+    }
+
+    const topTags = userTags.splice(0, 5);
+    const botTags = userTags.splice(-5, 5);
+    const topTagsFlat = topTags.map(tag => tag.name);
+    const botTagsFlat = botTags.map(tag => tag.name);
+
+    const userGames = [...user.games];
+    const userGamesMapped = userGames.map(game => game.appid);
+
+    const bestGames = steamGamesDB.where((game) => {
+        if (userGamesMapped.includes(game.appid)) return false;
+        const gameTags = game.tags;
+        if (!gameTags.length) return false;
+        //if (gameTags.includes(topTagsFlat[0])) console.log(gameTags);
+        return topTagsFlat.every(tag => gameTags.includes(tag)) && botTagsFlat.every(tag => !gameTags.includes(tag));
+    });
+
+    const bestGamesMapped = bestGames.map((game) => {
+        return {
+            appid: game.appid,
+            tags: game.tags,
+        }
+    });
+
+    const shuffle = (array) => {    //https://stackoverflow.com/a/2450976/9877700
+        var currentIndex = array.length, temporaryValue, randomIndex;
+
+        while (0 !== currentIndex) {
+            randomIndex = Math.floor(Math.random() * currentIndex);
+            currentIndex -= 1;
+
+            temporaryValue = array[currentIndex];
+            array[currentIndex] = array[randomIndex];
+            array[randomIndex] = temporaryValue;
+        }
+
+        return array;
+    }
+
+    const bestGamesShuffled = shuffle(bestGamesMapped);
+
+    res.json(bestGamesShuffled)
+}));
+
+app.post('/api/fetchGameInfo', catchAsync(async (req, res) => {
+    if (!req.user) return res.redirect('/login');
+
+    await fetch(`http://store.steampowered.com/api/appdetails?appids=${req.body.appid}`, {
+        method: 'GET'
+    }).then(response => {
+        return response.json();
+    }).then(json => {
+        if (!json || !json[req.body.appid].success) {
+            return res.json({
+                error: 1,
+            });
+        }
+        return res.json(json[req.body.appid].data);
+    });
+}));
+
+app.get('/api/reset', catchAsync(async (req, res) => {
+    if (!req.user) return res.redirect('/login');
+    const steamid = req.user.steamid;
+    const userDB = UserGames.getCollection("users");
+    const user = userDB.findOne({ id: steamid });
+    
+    user.games.forEach(game => {
+        game.rated = false;
+    });
+    user.tags = [];
+    userDB.update(user);
+    res.status(200).end();
+}));
 
 const server = app.listen(8080, () => {     // Hjemmesiden bliver startet på port 8080, altså 'localhost:8080'.
     console.log(`Express running => PORT ${server.address().port}`);
@@ -116,6 +677,6 @@ app.use((err, req, res, next) => {  // fanger fejl
             return res.status(500).send({
                 status: 'ERROR',
                 error: err.message,
-            })
+            });
     }
 });

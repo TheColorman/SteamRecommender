@@ -3,15 +3,17 @@
     "start": "npx nodemon server.js"
   },
   "dependencies": {
+    "body-parser": "^1.19.0",
     "connect-redis": "^5.1.0",
     "cookie-parser": "^1.4.5",
     "express": "^4.17.1",
     "express-session": "^1.17.1",
     "lodash": "^4.17.21",
+    "lokijs": "^1.5.12",
     "nan": "^2.14.2",
     "node-fetch": "^2.6.1",
     "nodemon": "^2.0.7",
-    "redis": "^3.1.0",
+    "redis-server": "^1.2.2",
     "steam-login": "^0.1.7"
   }
 }
