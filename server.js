@@ -8,7 +8,6 @@
 
 //  Her definerer jeg en masse programmer som jeg har installeret gennem Node Package Manager (NPM)
 const express = require('express');     // Serveren, altså det der viser HTML siden når du forbinder
-const cookieParser = require('cookie-parser');  // Cookie Parser, brugt til at lave cookies så vi kan gemme data om folk (gemt på Client side)
 const session = require('express-session'); // Session, bruges til at gemme data om folk (gemt på Server side)
 const bodyParser = require('body-parser');
 const path = require('path');   // Path, bliver brugt til at finde filer og sådan noget
@@ -355,6 +354,7 @@ app.get('/contact', (req, res) => {
     res.sendFile(path.join(__dirname + '/website/contact/index.html'));
 });
 app.get('/account', (req, res) => {
+    if (!req.user) return res.redirect("/login");
     res.sendFile(path.join(__dirname + '/website/account/index.html'));
 });
 
@@ -371,6 +371,7 @@ app.get('/logout', steamLogin.enforceLogin('/'), (req, res) => {
 });
 //#endregion
 
+// Gem personens spil
 app.get('/save-games', catchAsync(async (req, res) => {
     if (!req.user) return res.redirect('/login');
     const steamid = req.user.steamid;
@@ -412,36 +413,7 @@ app.get('/save-games', catchAsync(async (req, res) => {
     res.redirect('/');
 }));
 
-app.get('/api-test', catchAsync(async (req, res) => {
-    if (req.user == null) return res.end('<p>You\'re not <a href="/login"> logged in</a>.</p>');
-    const steamID = req.user.steamid;
-    const request = {
-        key: APIkey,
-        steamid: steamID,
-        include_appinfo: true,
-        include_played_free_games: true,
-    }
-    const response = await fetch(`https://api.steampowered.com/IPlayerService/GetOwnedGames/v1?${querystring.stringify(request)}`, {
-        method: 'GET',
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-    });
-    const resjson = await response.json();
-    const games = resjson.response.games;
-    const filteredGames = games.filter(game => game.playtime_forever >= 10);
-    req.user.games = filteredGames;
-    const sortedGames = filteredGames.sort((a, b) => b.playtime_forever - a.playtime_forever);
-    res.setHeader('Content-Type', 'text/html; charset=utf8');
-    res.write("<h1>List of steam games you have at least 1 hour of playtime in.     also a <a href='/'>home button</a><br><br>");
-    sortedGames.forEach(game => {
-        res.write(`<h3>${game.name}</h3>`);
-        res.write(`<img src="http://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_logo_url}.jpg">`)
-        res.write(`<p>Playtime: ${game.playtime_forever/60} hours</p><br>`);
-    });
-    res.end();
-}));
-
+// Gem flere steam spil i databasen
 app.get('/reload-database', catchAsync(async (req, res) => {
     
     // Få en liste over alle steam spil
@@ -491,7 +463,8 @@ app.get('/reload-database', catchAsync(async (req, res) => {
     }
 }));
 
-// api endpoints
+// API endpoints
+    // Får spil fra brugerens bibliotek og sender et spil der skal rates tilbage
 app.get('/api/fetchUserGames', catchAsync(async (req, res) => {
     if (!req.user) return res.redirect('/login');   // You can only make this API call if you are logged in, so this shouldn't be necessary, but you never know.
     const steamid = req.user.steamid;
@@ -502,7 +475,7 @@ app.get('/api/fetchUserGames', catchAsync(async (req, res) => {
         let game = steamGamesDB.findOne({ appid: user.games[i].appid });
         if (game === null) {
             addedGames = true;
-            console.log(`Could not fine game: ${user.games[i].name} with ID ${user.games[i].appid}`);
+            console.log(`Could not find game: ${user.games[i].name} with ID ${user.games[i].appid}`);
             await fetch(`https://store.steampowered.com/app/${user.games[i].appid}`, {
                 method: 'GET',
             }).then(async appRes => {
@@ -535,6 +508,7 @@ app.get('/api/fetchUserGames', catchAsync(async (req, res) => {
     res.status(200).end();
 }));
 
+    // Giver et spil en rating
 app.post('/api/rateGame', catchAsync(async (req, res) => {
     if (!req.user) return res.redirect('/login');
     const steamid = req.user.steamid;
@@ -572,6 +546,7 @@ app.post('/api/rateGame', catchAsync(async (req, res) => {
     res.status(200).end();
 }));
 
+    // Laver en liste af spil baseret på tags brugeren kan lide og returnere listen
 app.get('/api/recommendations', catchAsync(async (req, res) => {
     if (!req.user) return res.redirect('/login');
     const steamid = req.user.steamid;
@@ -636,6 +611,7 @@ app.get('/api/recommendations', catchAsync(async (req, res) => {
     res.json(bestGamesShuffled)
 }));
 
+    // Får information om spil, som beskrivelse, billede og pris
 app.post('/api/fetchGameInfo', catchAsync(async (req, res) => {
     if (!req.user) return res.redirect('/login');
 
@@ -653,6 +629,7 @@ app.post('/api/fetchGameInfo', catchAsync(async (req, res) => {
     });
 }));
 
+    // Fjerne alle tidligere ratings
 app.get('/api/reset', catchAsync(async (req, res) => {
     if (!req.user) return res.redirect('/login');
     const steamid = req.user.steamid;
