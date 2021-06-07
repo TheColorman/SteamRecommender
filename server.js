@@ -9,11 +9,11 @@
 //  Her definerer jeg en masse programmer som jeg har installeret gennem Node Package Manager (NPM)
 const express = require('express');     // Serveren, altså det der viser HTML siden når du forbinder
 const session = require('express-session'); // Session, bruges til at gemme data om folk (gemt på Server side)
+const steamLogin = require('steam-login');  // Ting til at logge ind med steam
 const bodyParser = require('body-parser');
 const path = require('path');   // Path, bliver brugt til at finde filer og sådan noget
 const fetch = require('node-fetch');    // Fetch, brugt til at forbinde til API's
-const querystring = require('querystring'); // Ting der laver arrays om til queries (det er de dele af et url der ser sådan her ud: "?appid=1234&username=something")
-const steamLogin = require('steam-login');  // Ting til at logge ind med steam
+const querystring = require('querystring'); // Ting der laver objekter om til queries (det er de dele af et url der ser sådan her ud: "?appid=1234&username=something")
 const loki = require('lokijs');     // Database så vi kan gemme data
 
 const { catchAsync } = require('./utils.js'); // Vores fil med hjælpefunktioner
@@ -73,22 +73,21 @@ function runSteamGamesLogic() {
 
 const app = express();  // Express bliver brugt til at starte en app (aka. en hjemmeside)
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(session({
+app.use(express.static(path.join(__dirname, 'public')));    // gør så vi kan bruge css
+app.use(session({   // måden vi gemmer steam data på
     secret: secret,
     resave: false,
     saveUninitialized: false,
     //cookie: { secure: true },
 }
 ));
-app.use(steamLogin.middleware({
+app.use(steamLogin.middleware({     // måden vi logger ind på steam på
     realm: 'http://localhost:8080/',
     verify: 'http://localhost:8080/verify',
     apiKey: APIkey,
 }));
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
-
 
 app.get('/', (req, res) => {    // Hjemmesiden bliverk kørt på localhost, så '/' er 'localhost/'. Hvis der havde stået ".get('/login/')" ville det være 'localhost/login'.
     res.sendFile(path.join(__dirname + '/website/index.html')); // HTML filen bliver sendt til siden
@@ -252,10 +251,12 @@ app.get('/rating', catchAsync(async (req, res) => {
         </body>
     </html>`);
 }));
+
 app.get('/recommend', (req, res) => {
     if (!req.user) return res.redirect("/login");
     const steamid = req.user.steamid;
     const userDB = UserGames.getCollection("users");
+
     let user = userDB.findOne({ id: steamid });
     if (user === null || !user.games.length) return res.redirect("/save-games");
 
@@ -304,6 +305,7 @@ app.get('/recommend', (req, res) => {
                     }).then(response => {
                         return response.json();
                     }).then(resJSON => {
+                        if (!gameList.length) return noGames();
                         setHtml(gameList[0], resJSON);
                     });
                 }
@@ -333,15 +335,12 @@ app.get('/recommend', (req, res) => {
                         console.log(gameList);
                 
                         if (gameList.error) {
-                            switch(gameList.error) {
-                                case 1:
-                                    fetchStatus.innerHTML = \`<div class="title">
-                                        Not enough rated games.
-                                    </div>
-                                    <div class="text">
-                                        Click <a href="/rating">here</a> to begin rating games so we can craft recommendations for you.
-                                    </div>\`;
-                            }
+                            fetchStatus.innerHTML = \`<div class="title">
+                                Not enough rated games.
+                            </div>
+                            <div class="text">
+                                Click <a href="/rating">here</a> to begin rating games so we can craft recommendations for you.
+                            </div>\`;
                         }
                         updateGame();
                     });
@@ -350,6 +349,7 @@ app.get('/recommend', (req, res) => {
         </body>
     </html>`);
 });
+
 app.get('/contact', (req, res) => {
     res.sendFile(path.join(__dirname + '/website/contact/index.html'));
 });
@@ -459,7 +459,7 @@ app.get('/reload-database', catchAsync(async (req, res) => {
             console.log(`App tags: ${tags}`);
             
         });
-        res.end(`what is up dog`);    
+        res.end(`what is up dog`);
     }
 }));
 
@@ -478,7 +478,7 @@ app.get('/api/fetchUserGames', catchAsync(async (req, res) => {
             console.log(`Could not find game: ${user.games[i].name} with ID ${user.games[i].appid}`);
             await fetch(`https://store.steampowered.com/app/${user.games[i].appid}`, {
                 method: 'GET',
-            }).then(async appRes => {
+            }).then(async (appRes) => {
                 const appHtml = await appRes.text();
                 const regexp = /<a[^>]*class=\"app_tag\"[^>]*>([^<]*)<\/a>/gmi;
                 const regexpArr = [...appHtml.matchAll(regexp)];
@@ -487,6 +487,7 @@ app.get('/api/fetchUserGames', catchAsync(async (req, res) => {
                 regexpArr.forEach(match => {
                     tags.push(match[1].trim());
                 });
+
                 steamGamesDB.insert({
                     appid: user.games[i].appid,
                     tags: tags,
@@ -495,6 +496,7 @@ app.get('/api/fetchUserGames', catchAsync(async (req, res) => {
             });
         }
     }
+
     const ratingGame = user.games.find(game => !game.rated && game.playtime_forever >= 10);
     if (!ratingGame) {
         res.json({
@@ -554,13 +556,13 @@ app.get('/api/recommendations', catchAsync(async (req, res) => {
     const steamGamesDB = SteamGames.getCollection("games");
     const user = userDB.findOne({ id: steamid });
 
-    const userTags = [...user.tags];
-    userTags.sort((a, b) => {
+    const userTags = [...user.tags];    // Lav kopi af brugers liked/disliked tags
+    userTags.sort((a, b) => {   // Sortér tags efter rating
         if (a.rating < b.rating) return 1;
         if (b.rating < a.rating) return -1;
         return 0;
     });
-    if (!userTags || userTags.length < 15) {
+    if (!userTags || userTags.length < 15) {     // Hvis der er under 15 tags, så send fejl (det betyder man ikke har rated nok spil)
         res.json({
             error: 1,
         });
@@ -568,29 +570,32 @@ app.get('/api/recommendations', catchAsync(async (req, res) => {
         return;
     }
 
-    const topTags = userTags.splice(0, 5);
-    const botTags = userTags.splice(-5, 5);
-    const topTagsFlat = topTags.map(tag => tag.name);
+    const topTags = userTags.splice(0, 5);  // Bedste (første) 5 tags
+    const botTags = userTags.splice(-5, 5); // Værste (sidste) 5 tags
+
+    const topTagsFlat = topTags.map(tag => tag.name);   // Tags, men  ["Action", "Adventure"] i stedet for [{ name: "Action", rating: 5 }, { name: "Adventure", rating: 3 }]
     const botTagsFlat = botTags.map(tag => tag.name);
 
-    const userGames = [...user.games];
-    const userGamesMapped = userGames.map(game => game.appid);
+    const userGames = [...user.games];  // Kopi 
+    const userGamesMapped = userGames.map(game => game.appid);  // Brugerens spil, men [75435, 734532] i stedet for [{ appid: "75435", name: "Big Bone Simulator", playtime_forever: 123 }...]
 
-    const bestGames = steamGamesDB.where((game) => {
-        if (userGamesMapped.includes(game.appid)) return false;
+    const bestGames = steamGamesDB.where((game) => {    // Filtér spil
+        if (userGamesMapped.includes(game.appid)) return false; // Hvis allerede spillet, send false
         const gameTags = game.tags;
-        if (!gameTags.length) return false;
-        //if (gameTags.includes(topTagsFlat[0])) console.log(gameTags);
+        if (!gameTags.length) return false; // Hvis spillet ikke har tags, send false
+
+        // KUN hvis spillet har BÅDE 5 bedste tags OG IKKE har 5 værste tags, send true
         return topTagsFlat.every(tag => gameTags.includes(tag)) && botTagsFlat.every(tag => !gameTags.includes(tag));
     });
 
-    const bestGamesMapped = bestGames.map((game) => {
+    const bestGamesMapped = bestGames.map((game) => {   // Spil, men [{ appid: "1234", tags: ["Action", "Adventure"] }] i stedet for [{ appid: "1234", tags: ["Action", "Adventure"], ... }]
         return {
             appid: game.appid,
             tags: game.tags,
         }
     });
 
+    // Shuffle funktion, spørg stackoverflow
     const shuffle = (array) => {    //https://stackoverflow.com/a/2450976/9877700
         var currentIndex = array.length, temporaryValue, randomIndex;
 
@@ -606,9 +611,9 @@ app.get('/api/recommendations', catchAsync(async (req, res) => {
         return array;
     }
 
-    const bestGamesShuffled = shuffle(bestGamesMapped);
+    const bestGamesShuffled = shuffle(bestGamesMapped); // Shuffled games
 
-    res.json(bestGamesShuffled)
+    res.json(bestGamesShuffled);    // Giv spil tilbage til Client
 }));
 
     // Får information om spil, som beskrivelse, billede og pris
@@ -645,7 +650,7 @@ app.get('/api/reset', catchAsync(async (req, res) => {
 }));
 
 const server = app.listen(8080, () => {     // Hjemmesiden bliver startet på port 8080, altså 'localhost:8080'.
-    console.log(`Express running => PORT ${server.address().port}`);
+console.log(`Express running => PORT ${server.address().port}`);
 });
 
 app.use((err, req, res, next) => {  // fanger fejl
