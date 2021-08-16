@@ -82,8 +82,8 @@ app.use(session({   // måden vi gemmer steam data på
 }
 ));
 app.use(steamLogin.middleware({     // måden vi logger ind på steam på
-    realm: 'http://localhost:8080/',
-    verify: 'http://localhost:8080/verify',
+    realm: 'http://localhost:8081/',
+    verify: 'http://localhost:8081/verify',
     apiKey: APIkey,
 }));
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -391,6 +391,7 @@ app.get('/save-games', catchAsync(async (req, res) => {
         }
     });
     const resjson = await response.json();
+    console.log(request);
     const games = resjson.response.games;
     let user = userDB.findOne({ id: steamid });
     if (user === null) {
@@ -649,7 +650,7 @@ app.get('/api/reset', catchAsync(async (req, res) => {
     res.status(200).end();
 }));
 
-const server = app.listen(8080, () => {     // Hjemmesiden bliver startet på port 8080, altså 'localhost:8080'.
+const server = app.listen(8081, () => {     // Hjemmesiden bliver startet på port 8080, altså 'localhost:8080'.
 console.log(`Express running => PORT ${server.address().port}`);
 });
 
