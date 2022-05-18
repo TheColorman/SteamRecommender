@@ -1,5 +1,2 @@
-# SteamRecommender
- 
-Kræver node.js
-
-kør `node server.js` for at starte serveren og åben `localhost:8080` i browseren
+# This is a school project. Quality may vary.  
+## Steam Recommender - Log in with steam, rate games, and new games get recommended.
